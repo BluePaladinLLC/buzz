@@ -57,6 +57,18 @@ pub fn compute_participant_hash(pubkeys: &[&[u8]]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn participant_sets_match(actual: &[Vec<u8>], expected: &[&[u8]]) -> bool {
+    let mut actual = actual.to_vec();
+    actual.sort_unstable();
+    actual.dedup();
+
+    let mut expected: Vec<Vec<u8>> = expected.iter().map(|pk| pk.to_vec()).collect();
+    expected.sort_unstable();
+    expected.dedup();
+
+    actual == expected
+}
+
 // -- DB functions -------------------------------------------------------------
 
 /// Find an existing DM by its participant hash.
@@ -150,6 +162,32 @@ pub async fn create_dm(
     .await?;
 
     if let Some(row) = existing {
+        let channel_id: Uuid = row.try_get("id")?;
+        // Serialize the exact-set decision with add_member/remove_member, then
+        // re-read the active set after acquiring their shared lock namespace.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!(
+                "buzz_channel_membership:{}:{}",
+                community_id.as_uuid(),
+                channel_id
+            ))
+            .execute(&mut *tx)
+            .await?;
+        let active_participants = sqlx::query_scalar::<_, Vec<u8>>(
+            "SELECT pubkey FROM channel_members \
+             WHERE community_id = $1 AND channel_id = $2 AND removed_at IS NULL \
+             ORDER BY pubkey",
+        )
+        .bind(community_id.as_uuid())
+        .bind(channel_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !participant_sets_match(&active_participants, participants) {
+            return Err(DbError::InvalidData(
+                "DM participant hash matched a channel with a different active member set"
+                    .to_string(),
+            ));
+        }
         tx.commit().await?;
         return row_to_channel_record(row);
     }
@@ -374,10 +412,55 @@ pub async fn open_dm(
 
     let hash = compute_participant_hash(&all);
 
-    // Check for existing DM first (fast path, no transaction).
+    // Check for an existing hash match, then serialize the exact-set decision
+    // with add_member/remove_member before returning or changing hidden state.
     if let Some(existing) = find_dm_by_participants(pool, community_id, &hash).await? {
-        // Clear hidden_at for the caller so the DM reappears in their sidebar.
-        unhide_dm(pool, community_id, existing.id, created_by).await?;
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!(
+                "buzz_channel_membership:{}:{}",
+                community_id.as_uuid(),
+                existing.id
+            ))
+            .execute(&mut *tx)
+            .await?;
+        let active_participants = sqlx::query_scalar::<_, Vec<u8>>(
+            r#"
+            SELECT pubkey
+            FROM channel_members
+            WHERE community_id = $1 AND channel_id = $2 AND removed_at IS NULL
+            ORDER BY pubkey
+            "#,
+        )
+        .bind(community_id.as_uuid())
+        .bind(existing.id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        if !participant_sets_match(&active_participants, &all) {
+            return Err(DbError::InvalidData(
+                "DM participant hash matched a channel with a different active member set"
+                    .to_string(),
+            ));
+        }
+        let unhidden = sqlx::query(
+            r#"
+            UPDATE channel_members
+            SET hidden_at = NULL
+            WHERE community_id = $1 AND channel_id = $2 AND pubkey = $3 AND removed_at IS NULL
+            "#,
+        )
+        .bind(community_id.as_uuid())
+        .bind(existing.id)
+        .bind(created_by)
+        .execute(&mut *tx)
+        .await?;
+        if unhidden.rows_affected() == 0 {
+            return Err(DbError::InvalidData(
+                "DM opener is not an active member of the exact participant set".to_string(),
+            ));
+        }
+        tx.commit().await?;
         return Ok((existing, false));
     }
 
@@ -553,5 +636,74 @@ mod tests {
         let b = [255u8; 32];
         let h = compute_participant_hash(&[&a, &b]);
         assert_eq!(h.len(), 32);
+    }
+
+    #[test]
+    fn corrupt_hash_match_with_extra_active_member_fails_closed() {
+        let bruno = vec![1u8; 32];
+        let pons = vec![2u8; 32];
+        let thalamus = vec![3u8; 32];
+        let actual = vec![bruno.clone(), pons.clone(), thalamus];
+
+        assert!(
+            !participant_sets_match(&actual, &[bruno.as_slice(), pons.as_slice()]),
+            "a stale two-party hash must not make a three-member DM an exact match"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires migrated Postgres"]
+    async fn open_dm_rejects_corrupt_hash_match_with_extra_active_member() {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .expect("TEST_DATABASE_URL must point to an isolated migrated database");
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("connect test DB");
+        let community_id = Uuid::new_v4();
+        let channel_id = Uuid::new_v4();
+        let bruno = vec![1u8; 32];
+        let pons = vec![2u8; 32];
+        let thalamus = vec![3u8; 32];
+        let stale_hash = compute_participant_hash(&[bruno.as_slice(), pons.as_slice()]);
+
+        sqlx::query("INSERT INTO communities (id, host) VALUES ($1, $2)")
+            .bind(community_id)
+            .bind(format!("dm-corruption-{}.example", community_id.simple()))
+            .execute(&pool)
+            .await
+            .expect("insert isolated community");
+        sqlx::query(
+            r#"INSERT INTO channels
+               (id, community_id, name, channel_type, visibility, created_by, participant_hash)
+               VALUES ($1, $2, 'DM', 'dm', 'private', $3, $4)"#,
+        )
+        .bind(channel_id)
+        .bind(community_id)
+        .bind(&bruno)
+        .bind(stale_hash.as_slice())
+        .execute(&pool)
+        .await
+        .expect("insert corrupt DM");
+        for pubkey in [&bruno, &pons, &thalamus] {
+            sqlx::query(
+                "INSERT INTO channel_members (community_id, channel_id, pubkey) VALUES ($1, $2, $3)",
+            )
+            .bind(community_id)
+            .bind(channel_id)
+            .bind(pubkey)
+            .execute(&pool)
+            .await
+            .expect("insert active member");
+        }
+
+        let error = open_dm(
+            &pool,
+            CommunityId::from_uuid(community_id),
+            &[bruno.as_slice(), pons.as_slice()],
+            bruno.as_slice(),
+        )
+        .await
+        .expect_err("corrupt hash match must fail closed");
+        assert!(error.to_string().contains("different active member set"));
     }
 }
