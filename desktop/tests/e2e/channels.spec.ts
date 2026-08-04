@@ -595,6 +595,37 @@ test("start a new direct message from the sidebar", async ({ page }) => {
   await expect(page.getByTestId("section-actions-dms")).not.toBeFocused();
 });
 
+test("owner-bound native agent is discoverable in New DM without advertised rooms", async ({
+  page,
+}) => {
+  const sigmaPubkey =
+    "1212121212121212121212121212121212121212121212121212121212121212";
+  await installMockBridge(page, {
+    searchProfiles: [
+      {
+        pubkey: sigmaPubkey,
+        displayName: "sigma",
+        ownerPubkey: "deadbeef".repeat(8),
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: sigmaPubkey,
+        name: "sigma",
+        ownerPubkey: "deadbeef".repeat(8),
+        respondTo: "anyone",
+        channelIds: [],
+      },
+    ],
+  });
+  await page.goto("/");
+
+  await openNewMessagePage(page);
+  await page.getByTestId("new-dm-search").fill("sig");
+  await expect(page.getByTestId(`new-dm-result-${sigmaPubkey}`)).toBeVisible();
+});
+
 test("keeps typing focus while arrow keys traverse and select DM recipients", async ({
   page,
 }) => {
@@ -3335,6 +3366,55 @@ test("home inbox manage affordance opens management without leaving home", async
   }
   expect(narrowSheetBox.width).toBeGreaterThanOrEqual(narrowHomeBox.width - 1);
   await expect(page).not.toHaveURL(/#\/channels\//);
+});
+
+test("members sidebar can invite an externally managed relay agent", async ({
+  page,
+}) => {
+  const nativeAgentPubkey = "9".repeat(64);
+  await installMockBridge(page, {
+    managedAgents: [],
+    relayAgents: [
+      {
+        pubkey: nativeAgentPubkey,
+        name: "Sigma Native",
+        respondTo: "owner-only",
+        channelAddPolicy: "anyone",
+        channelIds: [],
+      },
+    ],
+  });
+  await page.goto("/");
+  await openMembersSidebar(page, "general");
+  await page
+    .getByTestId("channel-management-search-users")
+    .fill("Sigma Native");
+
+  const result = page.getByTestId(
+    `channel-user-search-result-${nativeAgentPubkey}`,
+  );
+  await expect(result).toBeVisible();
+  await result.click();
+  await page.getByTestId("channel-management-search-users").clear();
+  await expect(
+    page.getByTestId(`sidebar-member-${nativeAgentPubkey}`),
+  ).toBeVisible();
+  const commands = await readCommandPayloadLog(page);
+  expect(commands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        command: "add_channel_members",
+        payload: expect.objectContaining({
+          channelId: expect.any(String),
+          pubkeys: [nativeAgentPubkey],
+          role: "bot",
+        }),
+      }),
+    ]),
+  );
+  expect(
+    commands.some((entry) => entry.command === "start_managed_agent"),
+  ).toBe(false);
 });
 
 test("members sidebar can invite and remove managed agents", async ({

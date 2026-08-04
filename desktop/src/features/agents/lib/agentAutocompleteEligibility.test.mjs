@@ -5,7 +5,9 @@ import {
   coalesceAgentAutocompleteCandidates,
   getMentionableAgentPubkeys,
   getSharedChannelIds,
-  isAgentIdentityInManagedList,
+  isAgentIdentityEligibleForRoomInvite,
+  isAgentIdentityEligibleForMentions,
+  relayAgentCanBeInvitedToRoom,
   relayAgentIsSharedWithUser,
   shouldHideAgentFromMentions,
 } from "./agentAutocompleteEligibility.ts";
@@ -106,6 +108,36 @@ test("relayAgentIsSharedWithUser: accepts allowlist agents for the current user"
   );
 });
 
+test("room invitation policy does not expand mention eligibility", () => {
+  const inviteableOwnerOnlyAgent = {
+    respondTo: "owner-only",
+    respondToAllowlist: [],
+    channelIds: [],
+    channelAddPolicy: "anyone",
+  };
+  assert.equal(
+    relayAgentIsSharedWithUser(
+      inviteableOwnerOnlyAgent,
+      new Set(),
+      CURRENT_PUBKEY,
+    ),
+    false,
+  );
+  assert.equal(relayAgentCanBeInvitedToRoom(inviteableOwnerOnlyAgent), true);
+});
+
+test("room invitation policy fails closed for restricted or missing values", () => {
+  assert.equal(
+    relayAgentCanBeInvitedToRoom({ channelAddPolicy: "owner_only" }),
+    false,
+  );
+  assert.equal(
+    relayAgentCanBeInvitedToRoom({ channelAddPolicy: "nobody" }),
+    false,
+  );
+  assert.equal(relayAgentCanBeInvitedToRoom({}), false);
+});
+
 test("getMentionableAgentPubkeys: keeps managed agents and shared relay agents", () => {
   const result = getMentionableAgentPubkeys({
     managedAgentPubkeys: [PUB_A],
@@ -136,27 +168,100 @@ test("getMentionableAgentPubkeys: keeps managed agents and shared relay agents",
   assert.deepEqual(result, new Set([PUB_A, PUB_B, PUB_C]));
 });
 
-test("isAgentIdentityInManagedList: keeps people and only current managed agent identities", () => {
+test("getMentionableAgentPubkeys: keeps owner-bound relay agents without advertised rooms", () => {
+  const result = getMentionableAgentPubkeys({
+    managedAgentPubkeys: [],
+    currentPubkey: CURRENT_PUBKEY,
+    relayAgents: [
+      {
+        pubkey: PUB_D,
+        ownerPubkey: CURRENT_PUBKEY.toUpperCase(),
+        respondTo: "anyone",
+        respondToAllowlist: [],
+        channelIds: [],
+      },
+    ],
+    sharedChannelIds: new Set(),
+  });
+
+  assert.deepEqual(result, new Set([PUB_D]));
+});
+
+test("isAgentIdentityEligibleForRoomInvite: keeps people, local agents, and inviteable relay agents", () => {
+  const managedAgentPubkeys = new Set([PUB_A]);
+  const inviteableRelayAgentPubkeys = new Set([PUB_B]);
+
+  assert.equal(
+    isAgentIdentityEligibleForRoomInvite(
+      { isAgent: false, pubkey: PUB_C },
+      managedAgentPubkeys,
+      inviteableRelayAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityEligibleForRoomInvite(
+      { isAgent: true, pubkey: PUB_A.toUpperCase() },
+      managedAgentPubkeys,
+      inviteableRelayAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityEligibleForRoomInvite(
+      { isAgent: true, pubkey: PUB_B.toUpperCase() },
+      managedAgentPubkeys,
+      inviteableRelayAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityEligibleForRoomInvite(
+      { isAgent: true, pubkey: PUB_D },
+      managedAgentPubkeys,
+      inviteableRelayAgentPubkeys,
+    ),
+    false,
+  );
+});
+
+test("isAgentIdentityEligibleForMentions: keeps people, managed, member, and current-owner agents", () => {
   const managedAgentPubkeys = new Set([PUB_A]);
 
   assert.equal(
-    isAgentIdentityInManagedList(
+    isAgentIdentityEligibleForMentions(
       { isAgent: false, pubkey: PUB_B },
       managedAgentPubkeys,
     ),
     true,
   );
   assert.equal(
-    isAgentIdentityInManagedList(
+    isAgentIdentityEligibleForMentions(
       { isAgent: true, pubkey: PUB_A.toUpperCase() },
       managedAgentPubkeys,
     ),
     true,
   );
   assert.equal(
-    isAgentIdentityInManagedList(
-      { isAgent: true, pubkey: PUB_B },
+    isAgentIdentityEligibleForMentions(
+      { isAgent: true, isMember: true, pubkey: PUB_B },
       managedAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityEligibleForMentions(
+      { isAgent: true, ownerPubkey: CURRENT_PUBKEY, pubkey: PUB_C },
+      managedAgentPubkeys,
+      CURRENT_PUBKEY,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityEligibleForMentions(
+      { isAgent: true, ownerPubkey: OTHER_OWNER_PUBKEY, pubkey: PUB_D },
+      managedAgentPubkeys,
+      CURRENT_PUBKEY,
     ),
     false,
   );

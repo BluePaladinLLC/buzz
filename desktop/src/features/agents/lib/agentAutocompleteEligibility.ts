@@ -1,4 +1,5 @@
 import type { Channel, RelayAgent } from "@/shared/api/types";
+import type { RelayAgentWithChannelAddPolicy } from "@/shared/api/relayAgent";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
 export function getSharedChannelIds(channels: readonly Channel[] | undefined) {
@@ -30,6 +31,12 @@ export function relayAgentIsSharedWithUser(
   );
 }
 
+export function relayAgentCanBeInvitedToRoom(
+  agent: Pick<RelayAgentWithChannelAddPolicy, "channelAddPolicy">,
+) {
+  return agent.channelAddPolicy === "anyone";
+}
+
 export function getMentionableAgentPubkeys({
   currentPubkey,
   managedAgentPubkeys,
@@ -46,6 +53,14 @@ export function getMentionableAgentPubkeys({
   );
 
   for (const agent of relayAgents ?? []) {
+    if (
+      currentPubkey &&
+      agent.ownerPubkey &&
+      normalizePubkey(agent.ownerPubkey) === normalizePubkey(currentPubkey)
+    ) {
+      pubkeys.add(normalizePubkey(agent.pubkey));
+      continue;
+    }
     if (relayAgentIsSharedWithUser(agent, sharedChannelIds, currentPubkey)) {
       pubkeys.add(normalizePubkey(agent.pubkey));
     }
@@ -54,13 +69,36 @@ export function getMentionableAgentPubkeys({
   return pubkeys;
 }
 
-export function isAgentIdentityInManagedList(
+export function isAgentIdentityEligibleForRoomInvite(
   candidate: { isAgent?: boolean; pubkey: string },
   managedAgentPubkeys: ReadonlySet<string>,
+  inviteableRelayAgentPubkeys: ReadonlySet<string>,
 ) {
+  if (candidate.isAgent !== true) return true;
+  const pubkey = normalizePubkey(candidate.pubkey);
   return (
-    candidate.isAgent !== true ||
-    managedAgentPubkeys.has(normalizePubkey(candidate.pubkey))
+    managedAgentPubkeys.has(pubkey) || inviteableRelayAgentPubkeys.has(pubkey)
+  );
+}
+
+export function isAgentIdentityEligibleForMentions(
+  candidate: {
+    isAgent?: boolean;
+    isMember?: boolean;
+    ownerPubkey?: string | null;
+    pubkey: string;
+  },
+  managedAgentPubkeys: ReadonlySet<string>,
+  currentPubkey?: string | null,
+) {
+  if (candidate.isAgent !== true) return true;
+  const pubkey = normalizePubkey(candidate.pubkey);
+  if (managedAgentPubkeys.has(pubkey) || candidate.isMember === true)
+    return true;
+  return Boolean(
+    currentPubkey &&
+      candidate.ownerPubkey &&
+      normalizePubkey(candidate.ownerPubkey) === normalizePubkey(currentPubkey),
   );
 }
 

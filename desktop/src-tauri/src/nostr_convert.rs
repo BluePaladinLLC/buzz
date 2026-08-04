@@ -316,23 +316,11 @@ pub fn users_batch_from_events(
     events: &[Event],
     requested_pubkeys: &[String],
 ) -> UsersBatchResponse {
-    // Keep only the most recent kind:0 per pubkey.
-    let mut latest: HashMap<String, &Event> = HashMap::new();
-    for ev in events {
-        let pk = ev.pubkey.to_hex();
-        let take = match latest.get(&pk) {
-            None => true,
-            Some(prev) => ev.created_at > prev.created_at,
-        };
-        if take {
-            latest.insert(pk, ev);
-        }
-    }
-
     let mut profiles = HashMap::new();
-    for (pk, ev) in &latest {
+    for ev in dedupe_replaceable_heads(events) {
+        let pk = ev.pubkey.to_hex();
         let v: Value = serde_json::from_str(&ev.content).unwrap_or(Value::Null);
-        let owner_pubkey = profile_valid_oa_owner_pubkey(ev);
+        let owner_pubkey = profile_valid_oa_owner_pubkey(&ev);
         let summary = UserProfileSummaryInfo {
             display_name: v
                 .get("display_name")
@@ -345,7 +333,7 @@ pub fn users_batch_from_events(
             is_agent: owner_pubkey.is_some(),
             owner_pubkey,
         };
-        profiles.insert(pk.clone(), summary);
+        profiles.insert(pk, summary);
     }
 
     let missing: Vec<String> = requested_pubkeys
@@ -355,6 +343,21 @@ pub fn users_batch_from_events(
         .collect();
 
     UsersBatchResponse { profiles, missing }
+}
+
+fn dedupe_replaceable_heads(events: &[Event]) -> Vec<Event> {
+    let mut latest = HashMap::<String, Event>::new();
+    for event in events {
+        let key = event.pubkey.to_hex();
+        let replace = latest.get(&key).is_none_or(|current| {
+            event.created_at > current.created_at
+                || (event.created_at == current.created_at && event.id > current.id)
+        });
+        if replace {
+            latest.insert(key, event.clone());
+        }
+    }
+    latest.into_values().collect()
 }
 
 // ── kind:1 (notes) ──────────────────────────────────────────────────────────
@@ -454,6 +457,10 @@ pub fn agents_from_events(events: &[Event]) -> Value {
             // authoritative source even if the content claims otherwise.
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("pubkey".to_string(), json!(pubkey.clone()));
+                obj.insert(
+                    "owner_pubkey".to_string(),
+                    profile_valid_oa_owner_pubkey(ev).map_or(Value::Null, Value::String),
+                );
                 let fallback_name = obj
                     .get("display_name")
                     .and_then(Value::as_str)
@@ -610,6 +617,34 @@ mod tests {
             .sign_with_keys(&agent_keys)
             .expect("sign");
         (event, owner_keys.public_key().to_hex())
+    }
+
+    #[test]
+    fn replaceable_profile_dedupe_uses_larger_event_id_at_equal_timestamp() {
+        let keys = Keys::generate();
+        let timestamp = nostr::Timestamp::from_secs(1_700_000_000);
+        let first = EventBuilder::new(Kind::Metadata, r#"{"name":"first"}"#)
+            .custom_created_at(timestamp)
+            .sign_with_keys(&keys)
+            .expect("sign first profile");
+        let second = EventBuilder::new(Kind::Metadata, r#"{"name":"second"}"#)
+            .custom_created_at(timestamp)
+            .sign_with_keys(&keys)
+            .expect("sign second profile");
+        let expected = if first.id > second.id {
+            &first
+        } else {
+            &second
+        };
+
+        for events in [
+            vec![first.clone(), second.clone()],
+            vec![second.clone(), first.clone()],
+        ] {
+            let heads = dedupe_replaceable_heads(&events);
+            assert_eq!(heads.len(), 1);
+            assert_eq!(heads[0].id, expected.id);
+        }
     }
 
     #[test]
@@ -896,6 +931,29 @@ mod tests {
     }
 
     #[test]
+    fn agents_materializes_verified_owner_from_auth_tag() {
+        let agent_keys = Keys::generate();
+        let owner_keys = Keys::generate();
+        let agent_pubkey = agent_keys.public_key();
+        let auth_tag_json = buzz_sdk_pkg::nip_oa::compute_auth_tag(&owner_keys, &agent_pubkey, "")
+            .expect("compute auth tag");
+        let auth_tag_values: Vec<String> =
+            serde_json::from_str(&auth_tag_json).expect("parse auth tag json");
+        let auth_tag = Tag::parse(auth_tag_values).expect("parse auth tag");
+        let directory_event = EventBuilder::new(Kind::from_u16(10100), r#"{"name":"agent-1"}"#)
+            .tags(vec![auth_tag])
+            .sign_with_keys(&agent_keys)
+            .expect("sign directory event");
+        let v = agents_from_events(std::slice::from_ref(&directory_event));
+        let arr = v.get("agents").and_then(Value::as_array).unwrap();
+        let owner_hex = owner_keys.public_key().to_hex();
+        assert_eq!(
+            arr[0].get("owner_pubkey").and_then(Value::as_str),
+            Some(owner_hex.as_str())
+        );
+    }
+
+    #[test]
     fn agents_handles_invalid_content() {
         let e = ev(10100, "not-json", vec![]);
         let v = agents_from_events(std::slice::from_ref(&e));
@@ -926,6 +984,7 @@ mod tests {
         assert_eq!(parsed[0].capabilities, Vec::<String>::new());
         assert_eq!(parsed[0].status, "offline");
         assert_eq!(parsed[0].respond_to, None);
+        assert_eq!(parsed[0].channel_add_policy.as_deref(), Some("owner-only"));
     }
 
     #[test]

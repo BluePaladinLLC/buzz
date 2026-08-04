@@ -780,18 +780,44 @@ test("other-owned agents without a shared channel are hidden from mentions", asy
   await expect(input.locator(".mention-chip")).toHaveCount(0);
 });
 
-test("own profile-only agents are hidden from channel mentions", async ({
+test("owner-bound native agents are visible in channel mentions", async ({
   page,
 }) => {
-  await installMockBridge(page, { userSearchDelayMs: 1_000 });
+  await installMockBridge(page, {
+    searchProfiles: [
+      {
+        pubkey: OWNED_AGENT_PROFILE_PUBKEY,
+        displayName: "sigma",
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        isAgent: true,
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: OWNED_AGENT_PROFILE_PUBKEY,
+        name: "sigma",
+        ownerPubkey: MOCK_VIEWER_PUBKEY,
+        respondTo: "anyone",
+      },
+    ],
+  });
   await page.goto("/");
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
 
   const input = page.getByTestId("message-input");
-  await input.fill("@mira");
+  await input.fill("@sig");
 
-  await expect(autocomplete(page)).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const commandLog = await readCommandLog(page);
+      return commandLog.some((entry) => entry === "search_users");
+    })
+    .toBe(true);
+
+  const dropdown = autocomplete(page);
+  await expect(dropdown.getByText("sigma")).toBeVisible();
+  await expect(dropdown.getByText("agent")).toBeVisible();
 });
 
 test("managed relay agents are visible in channel mentions regardless of relay policy", async ({

@@ -17,7 +17,6 @@ import type {
   HomeFeedResponse,
   ManagedAgent,
   ManagedAgentBackend,
-  RelayAgent,
   RelayMember,
   RelayMemberRole,
   PresenceLookup,
@@ -107,17 +106,6 @@ type RawSendChannelMessageResult = {
   created_at: number;
 };
 
-type RawRelayAgent = {
-  pubkey: string;
-  name: string;
-  agent_type: string;
-  channels: string[];
-  channel_ids: string[];
-  capabilities: string[];
-  status: RelayAgent["status"];
-  respond_to?: RelayAgent["respondTo"];
-  respond_to_allowlist?: string[];
-};
 export type RawManagedAgent = {
   pubkey: string;
   name: string;
@@ -210,6 +198,11 @@ export type {
   RawInstallRuntimeResult,
   RawInstallStepResult,
 } from "./installTypes";
+import {
+  fromRawRelayAgent,
+  type RawRelayAgent,
+  type RelayAgentWithChannelAddPolicy,
+} from "./relayAgent";
 
 type RawGitBashPrerequisite = {
   available: boolean;
@@ -672,20 +665,6 @@ export async function createAuthEvent(input: {
   return JSON.parse(eventJson) as RelayEvent;
 }
 
-function fromRawRelayAgent(agent: RawRelayAgent): RelayAgent {
-  return {
-    pubkey: agent.pubkey,
-    name: agent.name,
-    agentType: agent.agent_type,
-    channels: agent.channels,
-    channelIds: agent.channel_ids ?? [],
-    capabilities: agent.capabilities,
-    status: agent.status,
-    respondTo: agent.respond_to ?? null,
-    respondToAllowlist: agent.respond_to_allowlist ?? [],
-  };
-}
-
 export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
   return {
     pubkey: agent.pubkey,
@@ -830,7 +809,9 @@ export async function changeRelayMemberRole(
   await invokeTauri("change_relay_member_role", { targetPubkey, newRole });
 }
 
-export async function listRelayAgents(): Promise<RelayAgent[]> {
+export async function listRelayAgents(): Promise<
+  RelayAgentWithChannelAddPolicy[]
+> {
   return (await invokeTauri<RawRelayAgent[]>("list_relay_agents")).map(
     fromRawRelayAgent,
   );

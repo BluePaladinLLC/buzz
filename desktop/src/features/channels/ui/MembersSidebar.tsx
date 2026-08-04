@@ -9,7 +9,8 @@ import {
 import { attachManagedAgentToChannel } from "@/features/agents/channelAgents";
 import {
   coalesceAgentAutocompleteCandidates,
-  isAgentIdentityInManagedList,
+  isAgentIdentityEligibleForRoomInvite,
+  relayAgentCanBeInvitedToRoom,
 } from "@/features/agents/lib/agentAutocompleteEligibility";
 import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import { useClassifiedMembers } from "@/features/channels/lib/useClassifiedMembers";
@@ -272,6 +273,11 @@ export function MembersSidebar({
         .filter((label): label is string => Boolean(label)),
     );
     const managedAgentPubkeys = new Set(managedAgentsByPubkey.keys());
+    const inviteableRelayAgentPubkeys = new Set(
+      (relayAgentsQuery.data ?? [])
+        .filter(relayAgentCanBeInvitedToRoom)
+        .map((agent) => normalizePubkey(agent.pubkey)),
+    );
 
     const addCandidate = (candidate: AddMemberSearchCandidate) => {
       const pubkey = normalizePubkey(candidate.pubkey);
@@ -282,7 +288,11 @@ export function MembersSidebar({
           )) ||
         memberPubkeys.has(pubkey) ||
         isArchivedDiscovery(pubkey) ||
-        !isAgentIdentityInManagedList(candidate, managedAgentPubkeys)
+        !isAgentIdentityEligibleForRoomInvite(
+          candidate,
+          managedAgentPubkeys,
+          inviteableRelayAgentPubkeys,
+        )
       ) {
         return;
       }
@@ -326,7 +336,7 @@ export function MembersSidebar({
         displayName: agent.name,
         avatarUrl: null,
         nip05Handle: null,
-        ownerPubkey: null,
+        ownerPubkey: agent.ownerPubkey ?? null,
         isAgent: true,
       });
     }

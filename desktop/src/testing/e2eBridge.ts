@@ -104,10 +104,12 @@ type MockManagedAgentRuntimeSeed = {
 type MockRelayAgentSeed = {
   pubkey: string;
   name: string;
+  ownerPubkey?: string | null;
   agentType?: string;
   capabilities?: string[];
   respondTo?: RawRelayAgent["respond_to"];
   respondToAllowlist?: string[];
+  channelAddPolicy?: RawRelayAgent["channel_add_policy"];
   channelNames?: string[];
   channelIds?: string[];
   status?: PresenceStatus;
@@ -775,6 +777,7 @@ type RawSendChannelMessageResponse = {
 type RawRelayAgent = {
   pubkey: string;
   name: string;
+  owner_pubkey?: string | null;
   agent_type: string;
   channels: string[];
   channel_ids: string[];
@@ -782,6 +785,7 @@ type RawRelayAgent = {
   status: PresenceStatus;
   respond_to?: "owner-only" | "allowlist" | "anyone";
   respond_to_allowlist?: string[];
+  channel_add_policy?: "anyone" | "owner-only" | "nobody";
 };
 
 type RawManagedAgent = {
@@ -2172,6 +2176,7 @@ function resetMockRelayAgents(config?: E2eConfig) {
     mockRelayAgents.push({
       pubkey: seed.pubkey,
       name: seed.name,
+      owner_pubkey: seed.ownerPubkey ?? null,
       agent_type: seed.agentType ?? "goose",
       channels: channels.map((channel) => channel.name),
       channel_ids: channels.map((channel) => channel.id),
@@ -2179,6 +2184,7 @@ function resetMockRelayAgents(config?: E2eConfig) {
       status: seed.status ?? "online",
       respond_to: seed.respondTo ?? "owner-only",
       respond_to_allowlist: seed.respondToAllowlist ?? [],
+      channel_add_policy: seed.channelAddPolicy,
     });
   }
 }

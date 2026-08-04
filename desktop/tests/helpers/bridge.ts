@@ -57,10 +57,12 @@ type MockSearchProfileSeed = {
 type MockRelayAgentSeed = {
   pubkey: string;
   name: string;
+  ownerPubkey?: string | null;
   agentType?: string;
   capabilities?: string[];
   respondTo?: "owner-only" | "allowlist" | "anyone";
   respondToAllowlist?: string[];
+  channelAddPolicy?: "anyone" | "owner-only" | "nobody";
   channelNames?: string[];
   channelIds?: string[];
   status?: "online" | "away" | "offline";
