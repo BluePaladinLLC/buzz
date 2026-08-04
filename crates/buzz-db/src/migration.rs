@@ -561,7 +561,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 26);
+        assert_eq!(migrations.len(), 27);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -919,6 +919,26 @@ mod tests {
         assert!(heartbeat.contains("epoch"));
         assert!(heartbeat.contains("INSERT INTO replica_heartbeat (id) VALUES (1)"));
         assert!(heartbeat.contains("_operator_global_tables"));
+
+        // Room-response coordination is relay-authoritative transactional state:
+        // CAS leases, deputy dedup/budgets, and durable idempotency all remain
+        // community-scoped in one additive migration.
+        assert_eq!(migrations[26].version, 27);
+        let coordination = migrations[26].sql.as_str();
+        assert!(coordination.contains("CREATE TABLE room_coordination_turns"));
+        assert!(coordination.contains("CREATE TABLE room_coordination_contributions"));
+        assert!(coordination.contains("CREATE TABLE room_coordination_requests"));
+        assert!(coordination.contains("PRIMARY KEY (community_id, channel_id, thread_id, turn_id)"));
+        assert!(coordination.contains("PRIMARY KEY (community_id, request_id)"));
+        assert!(coordination.contains(
+            "CHECK ((status = 'open' AND finalized_at IS NULL AND final_event_id IS NULL)"
+        ));
+        assert!(coordination.contains("OR (status = 'finalized' AND finalized_at IS NOT NULL))"));
+        assert!(desired_schema.contains(
+            "CHECK ((status = 'open' AND finalized_at IS NULL AND final_event_id IS NULL)"
+        ));
+        assert!(desired_schema.contains("OR (status = 'finalized' AND finalized_at IS NOT NULL))"));
+        assert!(!coordination.contains("_operator_global_tables"));
     }
 
     #[test]
@@ -1161,7 +1181,7 @@ mod tests {
         run_migrations(&pool)
             .await
             .expect("retry succeeds after operator repair");
-        assert_eq!(applied_versions(&pool).await.last().copied(), Some(26));
+        assert_eq!(applied_versions(&pool).await.last().copied(), Some(27));
     }
 
     #[tokio::test]

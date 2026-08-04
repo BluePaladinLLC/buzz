@@ -45,6 +45,8 @@ pub mod relay_invite;
 pub mod relay_members;
 /// Replica freshness fence for keyset-cursor read routing.
 pub mod replica_fence;
+/// Transactional room-response coordination authority.
+pub mod room_coordination;
 /// Thread metadata persistence.
 pub mod thread;
 /// Per-community usage rollup queries for Prometheus gauges.
@@ -2246,6 +2248,24 @@ impl Db {
         pubkey: &[u8],
     ) -> Result<bool> {
         channel::is_member(&self.pool, community_id, channel_id, pubkey).await
+    }
+
+    /// Atomically apply a room-response coordination mutation on the writer.
+    pub async fn mutate_room_coordination(
+        &self,
+        community_id: CommunityId,
+        mutation: &room_coordination::CoordinationMutation,
+    ) -> Result<room_coordination::CoordinationResult> {
+        room_coordination::mutate(&self.pool, community_id, mutation).await
+    }
+
+    /// Read authoritative room-response coordination state from the writer.
+    pub async fn read_room_coordination(
+        &self,
+        community_id: CommunityId,
+        scope: &room_coordination::RoomScope,
+    ) -> Result<Option<room_coordination::CoordinationState>> {
+        room_coordination::read(&self.pool, community_id, scope).await
     }
 
     /// Return the active (channel, pubkey) membership pairs among the given

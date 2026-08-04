@@ -849,6 +849,40 @@ impl BuzzClient {
         .await
     }
 
+    /// POST JSON to an authenticated relay RPC using a fresh NIP-98 event on
+    /// every transport retry. Coordination mutations carry their own durable
+    /// request-id idempotency key, so retrying identical bytes is safe.
+    pub async fn post_authed_json(
+        &self,
+        path: &str,
+        value: &serde_json::Value,
+    ) -> Result<String, CliError> {
+        let url = format!("{}{path}", self.relay_url);
+        let body = bytes::Bytes::from(
+            serde_json::to_vec(value)
+                .map_err(|e| CliError::Other(format!("request serialization failed: {e}")))?,
+        );
+        self.with_retry_body(|| {
+            let url = url.clone();
+            let body = body.clone();
+            async move {
+                let auth = sign_nip98(&self.keys, "POST", &url, Some(&body))?;
+                let response = self
+                    .with_auth_tag(
+                        self.http
+                            .post(&url)
+                            .header("Authorization", auth)
+                            .header("Content-Type", "application/json")
+                            .body(body),
+                    )
+                    .send()
+                    .await?;
+                self.handle_response(response).await
+            }
+        })
+        .await
+    }
+
     /// Submit a signed Nostr event via POST /events.
     ///
     /// For non-idempotent moderation command kinds (9040–9044), an ambiguous
@@ -2290,6 +2324,88 @@ mod retry_policy_tests {
             attempts.load(Ordering::SeqCst),
             3,
             "all 3 attempts must fire before surfacing DeliveryUnknown"
+        );
+    }
+
+    #[tokio::test]
+    async fn room_coordination_retry_keeps_body_and_refreshes_nip98_event() {
+        use axum::extract::State;
+        use base64::Engine;
+
+        type Captured = Arc<tokio::sync::Mutex<Vec<(HeaderMap, Vec<u8>)>>>;
+        let seen: Captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route(
+                "/api/room-coordination",
+                post(
+                    |State(seen): State<Captured>, headers: HeaderMap, body: bytes::Bytes| async move {
+                        let mut seen = seen.lock().await;
+                        seen.push((headers, body.to_vec()));
+                        let status = if seen.len() == 1 {
+                            StatusCode::BAD_GATEWAY
+                        } else {
+                            StatusCode::OK
+                        };
+                        Response::builder()
+                            .status(status)
+                            .body(Body::from(if status == StatusCode::OK {
+                                r#"{"result":"applied"}"#
+                            } else {
+                                "bad gateway"
+                            }))
+                            .unwrap()
+                    },
+                ),
+            )
+            .with_state(Arc::clone(&seen));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let request = serde_json::json!({
+            "channel_id": uuid::Uuid::new_v4(),
+            "thread_id": "thread",
+            "turn_id": "turn",
+            "operation": "claim",
+            "expected_version": 0,
+            "request_id": uuid::Uuid::new_v4(),
+            "lease_seconds": 30,
+            "contribution_budget": 1
+        });
+        let response = test_client(&format!("http://{addr}"))
+            .post_authed_json("/api/room-coordination", &request)
+            .await
+            .expect("coordination response");
+        assert_eq!(response, r#"{"result":"applied"}"#);
+
+        let captured = seen.lock().await;
+        assert_eq!(captured.len(), 2, "502 must trigger one transport retry");
+        assert_eq!(captured[0].1, captured[1].1, "retry body must be identical");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&captured[0].1).expect("JSON body"),
+            request
+        );
+        let event_ids = captured
+            .iter()
+            .map(|(headers, _)| {
+                let auth = headers
+                    .get("authorization")
+                    .expect("NIP-98 required")
+                    .to_str()
+                    .expect("ASCII auth header")
+                    .strip_prefix("Nostr ")
+                    .expect("Nostr auth scheme");
+                let json = base64::engine::general_purpose::STANDARD
+                    .decode(auth)
+                    .expect("base64 NIP-98 event");
+                serde_json::from_slice::<nostr::Event>(&json)
+                    .expect("NIP-98 event JSON")
+                    .id
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(
+            event_ids[0], event_ids[1],
+            "each transport retry must carry a fresh NIP-98 event ID"
         );
     }
 }

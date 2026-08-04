@@ -239,6 +239,84 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// Atomically coordinate one response holder and deputy contributions
+    #[command(subcommand)]
+    RoomCoordination(RoomCoordinationCmd),
+}
+
+#[derive(Subcommand)]
+pub enum RoomCoordinationCmd {
+    /// Atomically acquire an absent or expired primary response lease
+    Claim {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        thread: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long, default_value_t = 0)]
+        expected_version: i64,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        lease_seconds: u32,
+        #[arg(long, default_value_t = 1)]
+        contribution_budget: u32,
+    },
+    /// Extend the current holder's lease
+    Renew {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        thread: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        lease_seconds: u32,
+    },
+    /// Claim one deputy contribution fingerprint without stealing the lease
+    Contribute {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        thread: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long)]
+        fingerprint: String,
+    },
+    /// Permanently close the turn (primary holder only)
+    Finalize {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        thread: String,
+        #[arg(long)]
+        turn: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long)]
+        final_event: Option<String>,
+    },
+    /// Read authoritative state for one turn
+    Read {
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        thread: String,
+        #[arg(long)]
+        turn: String,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -1992,6 +2070,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::RoomCoordination(sub) => commands::room_coordination::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }
