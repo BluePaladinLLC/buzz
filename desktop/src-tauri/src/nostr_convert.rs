@@ -351,7 +351,7 @@ fn dedupe_replaceable_heads(events: &[Event]) -> Vec<Event> {
         let key = event.pubkey.to_hex();
         let replace = latest.get(&key).is_none_or(|current| {
             event.created_at > current.created_at
-                || (event.created_at == current.created_at && event.id > current.id)
+                || (event.created_at == current.created_at && event.id < current.id)
         });
         if replace {
             latest.insert(key, event.clone());
@@ -620,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn replaceable_profile_dedupe_uses_larger_event_id_at_equal_timestamp() {
+    fn replaceable_profile_dedupe_uses_lower_event_id_at_equal_timestamp() {
         let keys = Keys::generate();
         let timestamp = nostr::Timestamp::from_secs(1_700_000_000);
         let first = EventBuilder::new(Kind::Metadata, r#"{"name":"first"}"#)
@@ -631,7 +631,7 @@ mod tests {
             .custom_created_at(timestamp)
             .sign_with_keys(&keys)
             .expect("sign second profile");
-        let expected = if first.id > second.id {
+        let expected = if first.id < second.id {
             &first
         } else {
             &second
