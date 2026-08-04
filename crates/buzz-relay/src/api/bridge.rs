@@ -809,13 +809,10 @@ async fn submit_event_authed(
     )
     .await
     {
-        Ok(owner) => owner.or_else(|| {
-            if !state.config.require_relay_membership {
-                super::relay_members::extract_nip_oa_owner(&pubkey_bytes, auth_tag)
-            } else {
-                None
-            }
-        }),
+        // Admission and ownership materialization are separate. Direct members
+        // of a closed relay are admitted without delegation, but a valid
+        // x-auth-tag must still materialize their proven owner relationship.
+        Ok(owner) => super::relay_members::resolve_nip_oa_owner(owner, &pubkey_bytes, auth_tag),
         Err(e) => {
             return SubmitOutcome::Err {
                 status: e.0,

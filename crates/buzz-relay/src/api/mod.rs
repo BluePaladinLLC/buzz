@@ -146,11 +146,12 @@ pub mod relay_members {
 
     /// Extract NIP-OA owner from an auth tag without membership enforcement.
     ///
-    /// Used on open relays (`require_relay_membership = false`) to opportunistically
-    /// extract the owner pubkey for agent→owner backfill. The NIP-OA signature is
-    /// cryptographically self-proving, so no feature flag is needed — if the tag
-    /// verifies, the owner relationship is authentic. Returns `None` if the tag
-    /// is absent or invalid.
+    /// Used after membership admission to extract the owner pubkey for
+    /// agent→owner backfill. This includes direct members of closed relays:
+    /// direct membership grants admission but must not suppress independent
+    /// ownership materialization. The NIP-OA signature is cryptographically
+    /// self-proving, so no feature flag is needed — if the tag verifies, the
+    /// owner relationship is authentic. Returns `None` if absent or invalid.
     pub fn extract_nip_oa_owner(
         pubkey_bytes: &[u8],
         auth_tag_header: Option<&str>,
@@ -164,6 +165,19 @@ pub mod relay_members {
                 None
             }
         }
+    }
+
+    /// Resolve the NIP-OA owner to materialize after membership admission.
+    ///
+    /// Delegated admission already returns an owner. Direct membership returns
+    /// no admission owner, so independently verify any presented credential;
+    /// this keeps admission policy separate from ownership materialization.
+    pub fn resolve_nip_oa_owner(
+        admission_owner: Option<nostr::PublicKey>,
+        agent_pubkey_bytes: &[u8],
+        auth_tag_header: Option<&str>,
+    ) -> Option<nostr::PublicKey> {
+        admission_owner.or_else(|| extract_nip_oa_owner(agent_pubkey_bytes, auth_tag_header))
     }
 
     /// Persist a cryptographically verified NIP-OA agent→owner relationship.
@@ -272,6 +286,33 @@ pub mod relay_members {
             let result = extract_nip_oa_owner(&agent_pubkey.to_bytes(), Some("not valid json"));
 
             assert_eq!(result, None);
+        }
+
+        /// A closed-relay direct member has no admission owner, but its valid
+        /// credential must still resolve an owner for materialization.
+        #[test]
+        fn direct_member_valid_auth_tag_resolves_owner() {
+            let owner_keys = Keys::generate();
+            let agent_keys = Keys::generate();
+            let agent_pubkey = agent_keys.public_key();
+            let tag_json = compute_auth_tag(&owner_keys, &agent_pubkey, "")
+                .expect("compute_auth_tag must succeed");
+
+            let result = resolve_nip_oa_owner(None, &agent_pubkey.to_bytes(), Some(&tag_json));
+
+            assert_eq!(result, Some(owner_keys.public_key()));
+        }
+
+        /// Delegated admission remains authoritative and does not require a
+        /// second credential extraction.
+        #[test]
+        fn delegated_admission_owner_is_preserved() {
+            let owner = Keys::generate().public_key();
+            let agent = Keys::generate().public_key();
+
+            let result = resolve_nip_oa_owner(Some(owner), &agent.to_bytes(), None);
+
+            assert_eq!(result, Some(owner));
         }
     }
 }
