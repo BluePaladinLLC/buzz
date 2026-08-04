@@ -1001,7 +1001,112 @@ pub async fn cmd_remove_channel_member(
     Ok(())
 }
 
-/// Set the channel addition policy — sign and submit a kind:10100 (agent profile) event.
+#[derive(Debug)]
+struct AgentProfileHead {
+    content: serde_json::Map<String, serde_json::Value>,
+    created_at: u64,
+}
+
+fn next_agent_profile_timestamp(now: u64, head_created_at: u64) -> Result<u64, CliError> {
+    Ok(now.max(head_created_at.checked_add(1).ok_or_else(|| {
+        CliError::Other("existing kind:10100 timestamp cannot be advanced".into())
+    })?))
+}
+
+fn merge_channel_add_policy(
+    events: &[serde_json::Value],
+    author: &str,
+    policy: &str,
+) -> Result<AgentProfileHead, CliError> {
+    let latest = events
+        .iter()
+        .filter(|event| event.get("pubkey").and_then(serde_json::Value::as_str) == Some(author))
+        .max_by(|left, right| {
+            let left_created = left
+                .get("created_at")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or_default();
+            let right_created = right
+                .get("created_at")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or_default();
+            left_created.cmp(&right_created).then_with(|| {
+                let left_id = left
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let right_id = right
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                right_id.cmp(left_id)
+            })
+        })
+        .ok_or_else(|| {
+            CliError::Other(
+                "no existing kind:10100 agent profile found; refusing sparse replacement".into(),
+            )
+        })?;
+
+    let content = latest
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| CliError::Other("existing kind:10100 content is missing".into()))?;
+    let mut profile =
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(content)
+            .map_err(|e| CliError::Other(format!("existing kind:10100 content is invalid: {e}")))?;
+
+    // kind:10100 is the complete replaceable directory document. Preserving an
+    // already-sparse head would merely republish the corruption, so field-only
+    // mutation is allowed only when the selected head is independently useful
+    // for discovery and invocation.
+    for field in ["name", "agent_type", "capabilities", "status", "respond_to"] {
+        if !profile.contains_key(field) {
+            return Err(CliError::Other(format!(
+                "existing kind:10100 agent profile is incomplete (missing {field}); refusing partial update"
+            )));
+        }
+    }
+    if profile
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+        || profile
+            .get("agent_type")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        || profile
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        || profile
+            .get("respond_to")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        || !profile
+            .get("capabilities")
+            .is_some_and(serde_json::Value::is_array)
+    {
+        return Err(CliError::Other(
+            "existing kind:10100 agent profile is incomplete; refusing partial update".into(),
+        ));
+    }
+
+    profile.insert(
+        "channel_add_policy".into(),
+        serde_json::Value::String(policy.into()),
+    );
+    let created_at = latest
+        .get("created_at")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| CliError::Other("existing kind:10100 created_at is missing".into()))?;
+    Ok(AgentProfileHead {
+        content: profile,
+        created_at,
+    })
+}
+
+/// Set the channel addition policy while preserving the complete kind:10100 agent profile.
 pub async fn cmd_set_add_policy(client: &BuzzClient, policy: &str) -> Result<(), CliError> {
     match policy {
         "anyone" | "owner_only" | "nobody" => {}
@@ -1032,13 +1137,23 @@ pub async fn cmd_set_add_policy(client: &BuzzClient, policy: &str) -> Result<(),
         }
     }
 
-    let content = serde_json::json!({ "channel_add_policy": policy }).to_string();
-    use nostr::{EventBuilder, Kind};
+    let author = client.keys().public_key().to_hex();
+    let filter = serde_json::json!({
+        "kinds": [buzz_sdk::kind::KIND_AGENT_PROFILE],
+        "authors": [author],
+    });
+    let existing = client.query_paginated(filter, 100).await?;
+    let merged = merge_channel_add_policy(&existing, &author, policy)?;
+    let content = serde_json::Value::Object(merged.content).to_string();
+    let next_created_at =
+        next_agent_profile_timestamp(nostr::Timestamp::now().as_secs(), merged.created_at)?;
+    use nostr::{EventBuilder, Kind, Timestamp};
     let builder = EventBuilder::new(
         Kind::Custom(buzz_sdk::kind::KIND_AGENT_PROFILE as u16),
         &content,
     )
-    .tags([]);
+    .tags([])
+    .custom_created_at(Timestamp::from(next_created_at));
     let event = client.sign_event(builder)?;
 
     let resp = client.submit_event(event).await?;
@@ -1177,9 +1292,9 @@ pub async fn dispatch_canvas(cmd: crate::CanvasCmd, client: &BuzzClient) -> Resu
 mod tests {
     use super::{
         apply_cardinality_rule, build_template_report, cmd_set_add_policy,
-        finalize_roster_resolution, name_matches, resolve_roster_with_archive_filter,
-        validate_ttl_seconds, ArchivedExclusion, ChannelSummary, ResolvedAgent, RosterResolution,
-        SkippedSlug,
+        finalize_roster_resolution, merge_channel_add_policy, name_matches,
+        next_agent_profile_timestamp, resolve_roster_with_archive_filter, validate_ttl_seconds,
+        ArchivedExclusion, ChannelSummary, ResolvedAgent, RosterResolution, SkippedSlug,
     };
     use crate::client::BuzzClient;
     use crate::CliError;
@@ -1306,6 +1421,136 @@ mod tests {
             )));
         }
         Ok(())
+    }
+
+    #[test]
+    fn set_add_policy_merge_preserves_complete_profile() {
+        let author = "a".repeat(64);
+        let events = vec![serde_json::json!({
+            "id": "1".repeat(64),
+            "pubkey": author,
+            "created_at": 42,
+            "content": serde_json::json!({
+                "name": "Sigma",
+                "display_name": "Sigma",
+                "agent_type": "agent",
+                "capabilities": ["messages", "channels"],
+                "status": "active",
+                "respond_to": "allowlist",
+                "respond_to_allowlist": ["b".repeat(64)],
+                "channel_ids": ["room-a"],
+                "channel_add_policy": "owner_only"
+            }).to_string()
+        })];
+
+        let merged = merge_channel_add_policy(&events, &author, "anyone").unwrap();
+        assert_eq!(
+            merged
+                .content
+                .get("name")
+                .and_then(serde_json::Value::as_str),
+            Some("Sigma")
+        );
+        assert_eq!(
+            merged
+                .content
+                .get("respond_to")
+                .and_then(serde_json::Value::as_str),
+            Some("allowlist")
+        );
+        assert_eq!(
+            merged
+                .content
+                .get("channel_ids")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            merged
+                .content
+                .get("channel_add_policy")
+                .and_then(serde_json::Value::as_str),
+            Some("anyone")
+        );
+    }
+
+    #[test]
+    fn set_add_policy_merge_rejects_missing_profile() {
+        let error = merge_channel_add_policy(&[], &"a".repeat(64), "anyone").unwrap_err();
+        assert!(error.to_string().contains("refusing sparse replacement"));
+    }
+
+    #[test]
+    fn set_add_policy_merge_rejects_sparse_policy_only_profile() {
+        let author = "a".repeat(64);
+        let events = vec![serde_json::json!({
+            "id": "1".repeat(64),
+            "pubkey": author,
+            "created_at": 42,
+            "content": serde_json::json!({
+                "channel_add_policy": "owner_only"
+            }).to_string()
+        })];
+
+        let error = merge_channel_add_policy(&events, &author, "anyone").unwrap_err();
+        assert!(error.to_string().contains("profile is incomplete"));
+        assert!(error.to_string().contains("refusing partial update"));
+    }
+
+    #[test]
+    fn set_add_policy_merge_uses_newest_profile() {
+        let author = "a".repeat(64);
+        let events = vec![
+            serde_json::json!({
+                "id": "1".repeat(64),
+                "pubkey": author,
+                "created_at": 41,
+                "content": serde_json::json!({
+                    "name":"Old",
+                    "agent_type":"agent",
+                    "capabilities":[],
+                    "status":"offline",
+                    "respond_to":"owner-only"
+                }).to_string()
+            }),
+            serde_json::json!({
+                "id": "2".repeat(64),
+                "pubkey": author,
+                "created_at": 42,
+                "content": serde_json::json!({
+                    "name":"Current",
+                    "agent_type":"agent",
+                    "capabilities":[],
+                    "status":"online",
+                    "respond_to":"anyone"
+                }).to_string()
+            }),
+        ];
+        let merged = merge_channel_add_policy(&events, &author, "anyone").unwrap();
+        assert_eq!(
+            merged
+                .content
+                .get("name")
+                .and_then(serde_json::Value::as_str),
+            Some("Current")
+        );
+    }
+
+    #[test]
+    fn set_add_policy_timestamp_advances_same_second_head() {
+        assert_eq!(next_agent_profile_timestamp(42, 42).unwrap(), 43);
+    }
+
+    #[test]
+    fn set_add_policy_timestamp_advances_future_dated_head() {
+        assert_eq!(next_agent_profile_timestamp(42, 100).unwrap(), 101);
+    }
+
+    #[test]
+    fn set_add_policy_timestamp_rejects_unadvanceable_head() {
+        let error = next_agent_profile_timestamp(42, u64::MAX).unwrap_err();
+        assert!(error.to_string().contains("timestamp cannot be advanced"));
     }
 
     #[test]
