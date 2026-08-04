@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Desktop and shared changes
+
+- feat(desktop): add in-app admin console for relay operators — NIP-98 client for deployment-wide reports and product feedback (`Settings → Admin console`)
+
 ## v0.5.4
 
 ### Desktop and shared changes
