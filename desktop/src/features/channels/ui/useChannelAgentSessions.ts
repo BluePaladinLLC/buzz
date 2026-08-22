@@ -135,6 +135,14 @@ export function getChannelAgentSessionAgents({
   const botMemberPubkeys = channelMembers
     ? channelBotMemberPubkeySet(channelMembers)
     : null;
+  const dmParticipantPubkeys =
+    activeChannel.channelType === "dm"
+      ? new Set(
+          activeChannel.participantPubkeys.map((pubkey) =>
+            normalizePubkey(pubkey),
+          ),
+        )
+      : null;
 
   return agents.filter((agent) => {
     const normalizedPubkey = normalizePubkey(agent.pubkey);
@@ -145,6 +153,13 @@ export function getChannelAgentSessionAgents({
     const matchesDeclaredChannel =
       channelIds.includes(activeChannelId) ||
       channels.includes(activeChannel.name);
+
+    // DMs do not reliably expose channel membership or directory channel
+    // scope. A participant that is already a known managed/relay agent must
+    // still be classified as an agent so its typing feeds the working signal.
+    if (dmParticipantPubkeys?.has(normalizedPubkey)) {
+      return true;
+    }
 
     if (agent.agentSource === "member-bot") {
       return botMemberPubkeys?.has(normalizedPubkey) ?? matchesDeclaredChannel;
