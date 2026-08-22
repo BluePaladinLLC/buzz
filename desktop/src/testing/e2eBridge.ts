@@ -1072,7 +1072,8 @@ declare global {
     }) => Promise<void>;
     __BUZZ_E2E_WEBVIEW_ZOOM__?: number;
     __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
-      channelName: string;
+      channelId?: string;
+      channelName?: string;
       kind?: number;
     }) => boolean;
     __BUZZ_E2E_HAS_MOCK_OWNER_KIND_SUBSCRIPTION__?: (input: {
@@ -1105,7 +1106,8 @@ declare global {
       emit?: boolean;
     }) => RelayEvent[];
     __BUZZ_E2E_EMIT_MOCK_TYPING__?: (input: {
-      channelName: string;
+      channelId?: string;
+      channelName?: string;
       createdAt?: number;
       pubkey?: string;
       threadHeadId?: string;
@@ -9887,16 +9889,17 @@ export function maybeInstallE2eTauriMocks() {
   };
   window.__BUZZ_E2E_PREPEND_MOCK_HISTORY__ = prependMockHistory;
   window.__BUZZ_E2E_EMIT_MOCK_TYPING__ = ({
+    channelId,
     channelName,
     createdAt,
     pubkey,
     threadHeadId,
   }) => {
-    const channel = mockChannels.find(
-      (candidate) => candidate.name === channelName,
+    const channel = mockChannels.find((candidate) =>
+      channelId ? candidate.id === channelId : candidate.name === channelName,
     );
     if (!channel) {
-      throw new Error(`Mock channel ${channelName} not found.`);
+      throw new Error(`Mock channel ${channelId ?? channelName} not found.`);
     }
 
     return emitMockTypingIndicator(
@@ -9906,12 +9909,16 @@ export function maybeInstallE2eTauriMocks() {
       createdAt,
     );
   };
-  window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__ = ({ channelName, kind }) => {
-    const channel = mockChannels.find(
-      (candidate) => candidate.name === channelName,
+  window.__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__ = ({
+    channelId,
+    channelName,
+    kind,
+  }) => {
+    const channel = mockChannels.find((candidate) =>
+      channelId ? candidate.id === channelId : candidate.name === channelName,
     );
     if (!channel) {
-      throw new Error(`Mock channel ${channelName} not found.`);
+      throw new Error(`Mock channel ${channelId ?? channelName} not found.`);
     }
 
     return hasMockLiveSubscription(channel.id, kind);
