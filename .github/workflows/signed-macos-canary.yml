@@ -1,8 +1,9 @@
 name: Signed macOS Canary
 
-# Produces a signed and notarized Apple Silicon DMG from main without creating
-# a tag, GitHub Release, or auto-updater artifact. The DMG is available only as
-# a short-lived GitHub Actions artifact for explicit testing.
+# Produces a signed and notarized Apple Silicon DMG without creating a tag,
+# GitHub Release, or auto-updater artifact. Upstream builds remain main-only;
+# the BluePaladinLLC fork may run only explicitly named canary/* branches.
+# The DMG is available only as a short-lived GitHub Actions artifact.
 on:
   workflow_dispatch:
 
@@ -12,21 +13,29 @@ permissions:
 jobs:
   build:
     name: Build signed macOS canary
-    if: github.repository == 'block/buzz'
+    if: >-
+      (github.repository == 'block/buzz' && github.ref == 'refs/heads/main') ||
+      (github.repository == 'BluePaladinLLC/buzz' && startsWith(github.ref, 'refs/heads/canary/'))
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:
       contents: read
       id-token: write # required by block/apple-codesign-action for OIDC
     steps:
-      - name: Require main
+      - name: Verify approved source lane
         env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
           SOURCE_REF: ${{ github.ref }}
         run: |
-          if [[ "$SOURCE_REF" != "refs/heads/main" ]]; then
-            echo "::error::Signed canary builds must run from main; got $SOURCE_REF"
-            exit 1
+          set -euo pipefail
+          if [[ "$SOURCE_REPOSITORY" == "block/buzz" && "$SOURCE_REF" == "refs/heads/main" ]]; then
+            exit 0
           fi
+          if [[ "$SOURCE_REPOSITORY" == "BluePaladinLLC/buzz" && "$SOURCE_REF" == refs/heads/canary/* ]]; then
+            exit 0
+          fi
+          echo "::error::Signed canary source is not an approved repo/ref: $SOURCE_REPOSITORY $SOURCE_REF"
+          exit 1
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
