@@ -104,6 +104,45 @@ describe("DM agent typing classification", () => {
       [],
     );
   });
+
+  it("admits managed and relay agents participating in a group DM", () => {
+    const dm = {
+      id: "dm-group",
+      name: "Agent group DM",
+      channelType: "dm",
+      participantPubkeys: [AGENT, AGENT_2],
+    };
+    const agents = [
+      {
+        pubkey: AGENT,
+        name: "Sigma",
+        status: "deployed",
+        agentSource: "relay",
+        canInterruptTurn: false,
+        channelIds: [],
+        channels: [],
+      },
+      {
+        pubkey: AGENT_2,
+        name: "Managed agent",
+        status: "running",
+        agentSource: "managed",
+        canInterruptTurn: false,
+        channelIds: [],
+        channels: [],
+      },
+    ];
+
+    assert.deepEqual(
+      getChannelAgentSessionAgents({
+        activeChannel: dm,
+        activeChannelId: dm.id,
+        agents,
+        channelMembers: [],
+      }),
+      agents,
+    );
+  });
 });
 
 describe("thread-only bot typing regression", () => {

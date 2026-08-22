@@ -231,6 +231,36 @@ async function waitForMockLiveSubscription(
     .toBe(true);
 }
 
+async function waitForMockLiveSubscriptionByChannelId(
+  page: import("@playwright/test").Page,
+  channelId: string,
+  kind?: number,
+) {
+  await expect
+    .poll(async () => {
+      return page.evaluate(
+        ({ channelId, kind }) => {
+          return (
+            (
+              window as Window & {
+                __BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?: (input: {
+                  channelId?: string;
+                  channelName?: string;
+                  kind?: number;
+                }) => boolean;
+              }
+            ).__BUZZ_E2E_HAS_MOCK_LIVE_SUBSCRIPTION__?.({
+              channelId,
+              kind,
+            }) ?? false
+          );
+        },
+        { channelId, kind },
+      );
+    })
+    .toBe(true);
+}
+
 async function openMemberMenu(
   page: import("@playwright/test").Page,
   pubkey: string,
@@ -905,6 +935,93 @@ test("routes a managed relay-agent mention from an existing DM to the expanded c
   expect(sendCommands.map((entry) => entry.command)).not.toContain(
     "add_channel_members",
   );
+});
+
+test("shows a known relay agent typing below the DM composer, left aligned", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    managedAgents: [
+      {
+        pubkey: DM_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        status: "stopped",
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: DM_RELAY_AGENT_PUBKEY,
+        name: "quinn",
+        respondTo: "allowlist",
+        respondToAllowlist: [MOCK_IDENTITY_PUBKEY],
+      },
+    ],
+  });
+  await page.goto("/");
+
+  const sourceDm = page.getByTestId("channel-alice-tyler");
+  await sourceDm.click();
+  await expect(page.getByTestId("chat-title")).toHaveText("alice-tyler");
+
+  await page.getByTestId("message-input").fill("Ask @qui");
+  await expect(
+    page
+      .getByTestId("message-composer")
+      .getByTestId("mention-autocomplete")
+      .locator("button", { hasText: "quinn" }),
+  ).toBeVisible();
+  await page.getByTestId("message-input").press("Enter");
+  await page.keyboard.type(" to join this DM");
+  await page.getByTestId("send-message").click();
+
+  await expect(page.getByTestId("chat-title")).toContainText("quinn");
+  const expandedDmId =
+    (await page
+      .locator("[data-active='true'][data-channel-id]")
+      .getAttribute("data-channel-id")) ?? "";
+  expect(expandedDmId).not.toBe("");
+  await waitForMockLiveSubscriptionByChannelId(
+    page,
+    expandedDmId,
+    KIND_TYPING_INDICATOR,
+  );
+
+  const emitted = await page.evaluate(
+    ({ channelId, pubkey }) => {
+      return (
+        window as Window & {
+          __BUZZ_E2E_EMIT_MOCK_TYPING__?: (input: {
+            channelId?: string;
+            channelName?: string;
+            pubkey: string;
+          }) => unknown;
+        }
+      ).__BUZZ_E2E_EMIT_MOCK_TYPING__?.({ channelId, pubkey });
+    },
+    { channelId: expandedDmId, pubkey: DM_RELAY_AGENT_PUBKEY },
+  );
+  expect(emitted).toBeTruthy();
+
+  const activity = page.getByTestId("channel-composer-activity-row");
+  const composer = page.getByTestId("message-composer");
+  await expect(activity).toContainText("quinn: Working");
+  const [activityBox, composerBox] = await Promise.all([
+    activity.boundingBox(),
+    composer.boundingBox(),
+  ]);
+  expect(activityBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(activityBox?.y ?? 0).toBeGreaterThanOrEqual(
+    (composerBox?.y ?? 0) + (composerBox?.height ?? 0) - 1,
+  );
+
+  const layout = await activity.locator(":scope > div").evaluate((element) => {
+    const styles = getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
+    return { justifyContent: styles.justifyContent, left: bounds.left };
+  });
+  expect(layout.justifyContent).toBe("flex-start");
+  expect(layout.left).toBeLessThan((composerBox?.x ?? 0) + 80);
 });
 
 test("does not reroute an expanded DM after the user navigates away", async ({
