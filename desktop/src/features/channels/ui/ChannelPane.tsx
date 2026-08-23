@@ -39,6 +39,7 @@ import { useChannelWorkingAgentPubkeys } from "@/features/agents/agentWorkingSig
 import { useCardMintJobs } from "@/features/agents/cardMintStore";
 import { BotActivityComposerAction } from "@/features/channels/ui/BotActivityBar";
 import { ChannelComposerActivityAccessory } from "@/features/channels/ui/ChannelComposerActivityAccessory";
+import { threadComposerBotTypingPubkeyKey } from "@/features/channels/ui/useChannelActivityTyping";
 import {
   containsWelcomePersonaMention,
   WelcomeComposerGuidanceLayer,
@@ -364,17 +365,13 @@ export const ChannelPane = React.memo(function ChannelPane({
   const hasComposerBottomActivity =
     hasComposerBotActivity || hasTypingActivity || hasCardMintActivity;
   const threadComposerBotTypingPubkeys = React.useMemo(() => {
-    if (!openThreadHeadId) return [];
-    return botTypingEntries
-      .filter((entry) => entry.threadHeadId === openThreadHeadId)
-      .map((entry) => entry.pubkey)
-      .filter(
-        (pubkey, index, all) =>
-          all.findIndex(
-            (candidate) => candidate.toLowerCase() === pubkey.toLowerCase(),
-          ) === index,
-      );
-  }, [botTypingEntries, openThreadHeadId]);
+    const key = threadComposerBotTypingPubkeyKey(
+      botTypingEntries,
+      openThreadHeadId,
+      activeChannel?.channelType ?? null,
+    );
+    return key ? key.split(",") : [];
+  }, [activeChannel?.channelType, botTypingEntries, openThreadHeadId]);
   const hasThreadComposerBotActivity =
     threadComposerBotTypingPubkeys.length > 0;
   const directMessageIntro = React.useMemo(
