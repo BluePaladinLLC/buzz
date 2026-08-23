@@ -11,6 +11,7 @@ import { resetActiveAgentTurnsStore } from "../../agents/activeAgentTurnsStore.t
 import {
   channelScopedBotTypingPubkeyKey,
   mergeMemberAgentFlagsIntoProfiles,
+  threadComposerBotTypingPubkeyKey,
 } from "./useChannelActivityTyping.ts";
 import { getChannelAgentSessionAgents } from "./useChannelAgentSessions.ts";
 
@@ -41,6 +42,29 @@ describe("channelScopedBotTypingPubkeyKey", () => {
       { pubkey: AGENT, threadHeadId: null },
     ]);
     assert.equal(key, `${AGENT},${AGENT_2}`);
+  });
+});
+
+describe("threadComposerBotTypingPubkeyKey", () => {
+  it("inherits conversation-scoped agent activity in a focused DM thread", () => {
+    const key = threadComposerBotTypingPubkeyKey(
+      [{ pubkey: AGENT, threadHeadId: null }],
+      "thread-1",
+      "dm",
+    );
+    assert.equal(key, AGENT);
+  });
+
+  it("keeps room threads strictly thread-scoped", () => {
+    const key = threadComposerBotTypingPubkeyKey(
+      [
+        { pubkey: AGENT, threadHeadId: null },
+        { pubkey: AGENT_2, threadHeadId: "thread-1" },
+      ],
+      "thread-1",
+      "stream",
+    );
+    assert.equal(key, AGENT_2);
   });
 });
 

@@ -43,6 +43,9 @@ import {
 } from "@/features/messages/lib/videoReviewContext";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
+import { ComposerActivityAccessory } from "@/features/messages/ui/ComposerActivityAccessory";
+import { TypingIndicatorRow } from "@/features/messages/ui/TypingIndicatorRow";
+import { useChannelTyping } from "@/features/messages/useChannelTyping";
 import { useAnchoredScroll } from "@/features/messages/ui/useAnchoredScroll";
 import { useComposerHeightPadding } from "@/features/messages/ui/useComposerHeightPadding";
 import { UpdateIndicator } from "@/features/settings/UpdateIndicator";
@@ -208,6 +211,17 @@ function InboxMessageDetailPane({
   const conversationId = item?.conversationId ?? null;
   const selectedChannelId = item?.item.channelId ?? null;
   const isDirectMessage = item?.item.channelType === "dm";
+  const inboxTypingEntries = useChannelTyping(
+    isDirectMessage ? channel : null,
+    currentPubkey,
+  );
+  const inboxAgentTypingPubkeys = React.useMemo(
+    () =>
+      inboxTypingEntries
+        .filter((entry) => agentPubkeys?.has(entry.pubkey.toLowerCase()))
+        .map((entry) => entry.pubkey),
+    [agentPubkeys, inboxTypingEntries],
+  );
   // Build the plain, non-virtualized timeline the shared hook anchors against.
   // Live arrivals rerun its layout compensation without changing the target.
 
@@ -754,7 +768,7 @@ function InboxMessageDetailPane({
                 "radial-gradient(circle at top left, transparent 0 1rem, black calc(1rem + 0.5px))",
             }}
           />
-          <div className="pointer-events-auto">
+          <div className="pointer-events-auto relative">
             <MessageComposer
               audienceContext={isDirectMessage ? null : { type: "thread" }}
               channelId={item.item.channelId}
@@ -814,6 +828,21 @@ function InboxMessageDetailPane({
               }
               replyTarget={composerReplyTarget}
             />
+            <ComposerActivityAccessory
+              className="px-5"
+              testId="home-inbox-composer-activity-row"
+              visible={isDirectMessage && inboxAgentTypingPubkeys.length > 0}
+            >
+              <TypingIndicatorRow
+                channel={channel}
+                className="min-w-0 shrink px-0 py-0"
+                currentPubkey={currentPubkey}
+                labelMode="working"
+                profiles={profiles}
+                typingPubkeys={inboxAgentTypingPubkeys}
+                variant="activity"
+              />
+            </ComposerActivityAccessory>
           </div>
         </div>
       </div>

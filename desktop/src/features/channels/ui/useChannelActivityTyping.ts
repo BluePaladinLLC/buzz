@@ -32,6 +32,25 @@ export function channelScopedBotTypingPubkeyKey(
     .join(",");
 }
 
+/** Focused DM threads inherit conversation-scoped agent work; room threads do not. */
+export function threadComposerBotTypingPubkeyKey(
+  entries: readonly Pick<TypingIndicatorEntry, "pubkey" | "threadHeadId">[],
+  openThreadHeadId: string | null,
+  channelType: Channel["channelType"] | null,
+): string {
+  if (!openThreadHeadId) return "";
+  return entries
+    .filter(
+      (entry) =>
+        entry.threadHeadId === openThreadHeadId ||
+        (channelType === "dm" && entry.threadHeadId === null),
+    )
+    .map((entry) => entry.pubkey.toLowerCase())
+    .filter((pubkey, index, all) => all.indexOf(pubkey) === index)
+    .sort()
+    .join(",");
+}
+
 export function useChannelActivityTyping({
   activeChannel,
   activeChannelId,

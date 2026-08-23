@@ -65,6 +65,20 @@ function getTypingStateKey(pubkey: string, threadHeadId: string | null) {
   return `${pubkey}:${threadHeadId ?? "channel"}`;
 }
 
+export function getTypingCompletionStateKeys(
+  pubkey: string,
+  threadHeadId: string | null,
+  channelType: Channel["channelType"] | null,
+) {
+  const keys = [getTypingStateKey(pubkey, threadHeadId)];
+  // Agent work in DMs is conversation-scoped even when the durable answer is a
+  // branch reply. Clear that signal as soon as the focused reply lands.
+  if (channelType === "dm" && threadHeadId !== null) {
+    keys.push(getTypingStateKey(pubkey, null));
+  }
+  return keys;
+}
+
 export function useChannelTyping(
   channel: Channel | null,
   currentPubkey?: string,
@@ -157,24 +171,32 @@ export function useChannelTyping(
       requireChannelTagForPTags: true,
     }).toLowerCase();
     const threadHeadId = getTypingScopeId(latestMessageEvent);
-    const typingKey = getTypingStateKey(authorPubkey, threadHeadId);
-    latestMessageCreatedAtByPubkeyRef.current[typingKey] = Math.max(
-      latestMessageCreatedAtByPubkeyRef.current[typingKey] ?? 0,
-      latestMessageEvent.created_at,
+    const typingKeys = getTypingCompletionStateKeys(
+      authorPubkey,
+      threadHeadId,
+      channelType,
     );
-    typingSuppressUntilByPubkeyRef.current[typingKey] =
-      Date.now() + TYPING_POST_MESSAGE_SUPPRESS_MS;
+    for (const typingKey of typingKeys) {
+      latestMessageCreatedAtByPubkeyRef.current[typingKey] = Math.max(
+        latestMessageCreatedAtByPubkeyRef.current[typingKey] ?? 0,
+        latestMessageEvent.created_at,
+      );
+      typingSuppressUntilByPubkeyRef.current[typingKey] =
+        Date.now() + TYPING_POST_MESSAGE_SUPPRESS_MS;
+    }
     setTypingByPubkey((current) => {
       const next = pruneTypingState(current);
-      if (!(typingKey in next)) {
+      if (!typingKeys.some((typingKey) => typingKey in next)) {
         return next;
       }
 
       const updated = { ...next };
-      delete updated[typingKey];
+      for (const typingKey of typingKeys) {
+        delete updated[typingKey];
+      }
       return updated;
     });
-  }, [channelId, latestMessageEvent, relaySelfPubkey]);
+  }, [channelId, channelType, latestMessageEvent, relaySelfPubkey]);
 
   useEffect(() => {
     if (!channelId || channelType === "forum") {
