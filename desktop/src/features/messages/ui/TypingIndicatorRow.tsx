@@ -16,6 +16,7 @@ type TypingIndicatorRowProps = {
   currentPubkey?: string;
   profiles?: UserProfileLookup;
   typingPubkeys: string[];
+  labelMode?: "typing" | "working";
   variant?: "default" | "activity";
 };
 
@@ -57,6 +58,7 @@ export function TypingIndicatorRow({
   currentPubkey,
   profiles,
   typingPubkeys,
+  labelMode = "typing",
   variant = "default",
 }: TypingIndicatorRowProps) {
   const isActivityVariant = variant === "activity";
@@ -132,7 +134,13 @@ export function TypingIndicatorRow({
             )}
             data-testid="message-typing-indicator-label"
           >
-            <Shimmer>{formatTypingLabel(labels)}</Shimmer>
+            <Shimmer>
+              {labelMode === "working"
+                ? labels.length === 1
+                  ? `${labels[0]}: Working`
+                  : `${labels.length} agents: Working`
+                : formatTypingLabel(labels)}
+            </Shimmer>
           </p>
         </div>
       )}
