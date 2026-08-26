@@ -8,7 +8,9 @@
  *      so a cheap fetch already running would otherwise satisfy the forced
  *      refresh with cached data and the forced { force: true } probe would
  *      never run. The fix runs the forced probe on a separate key, writes its
- *      result into the shared cache, then cancels the in-flight cheap query.
+ *      cancels the in-flight cheap query, then writes its result into the
+ *      shared cache. Cancellation can restore the cheap query's pre-fetch
+ *      snapshot, so that ordering makes the forced result authoritative.
  *      This test holds a cheap request pending, fires refreshAcpRuntimes(),
  *      resolves the cheap request, and asserts a distinct { force: true } native
  *      call happened and the shared cache holds the forced result.
@@ -271,6 +273,45 @@ describe("refreshAcpRuntimes cannot dedup onto an in-flight cheap request", () =
       queryClient.getQueryData(acpRuntimesQueryKey)?.[0]?.authStatus.status,
       "logged_in",
       "shared cache must hold the forced result, not the later cheap one",
+    );
+
+    queryClient.unmount();
+  });
+
+  it("keeps the forced catalog when cancellation restores a stale snapshot", async () => {
+    const queryClient = makeQueryClient();
+    queryClient.mount();
+
+    queryClient.setQueryData(acpRuntimesQueryKey, [
+      rawEntry("codex", "unknown"),
+    ]);
+    const cheap = deferred();
+    discoverHandler = (args) =>
+      args?.force === false
+        ? cheap.promise
+        : Promise.resolve([rawEntry("codex", "logged_in")]);
+
+    const cheapFetch = queryClient.fetchQuery({
+      queryKey: acpRuntimesQueryKey,
+      queryFn: () => discoverAcpRuntimes(),
+      staleTime: 0,
+    });
+    await new Promise((r) => setImmediate(r));
+
+    const forced = await refreshAcpRuntimes(queryClient);
+    assert.equal(forced[0]?.authStatus.status, "logged_in");
+    assert.equal(
+      queryClient.getQueryData(acpRuntimesQueryKey)?.[0]?.authStatus.status,
+      "logged_in",
+      "cancellation must not restore the stale snapshot over the forced result",
+    );
+
+    cheap.resolve([rawEntry("codex", "unknown")]);
+    await cheapFetch.catch(() => {});
+    assert.equal(
+      queryClient.getQueryData(acpRuntimesQueryKey)?.[0]?.authStatus.status,
+      "logged_in",
+      "the cancelled cheap request must not later clobber the forced result",
     );
 
     queryClient.unmount();

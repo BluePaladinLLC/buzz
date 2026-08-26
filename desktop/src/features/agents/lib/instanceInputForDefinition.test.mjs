@@ -16,7 +16,7 @@ import {
 //   row 2: harnessOverride = !persona.runtime || persona.runtime === runtime.id
 //   row 3: avatar through resolveManagedAgentAvatarUrl (injectable upload)
 //   row 4: create input NEVER contains definition env vars
-//   row 6: runtime list acquisition forces fresh discovery
+//   row 6: runtime list acquisition is refetch-aware
 
 const gooseRuntime = {
   id: "goose",
@@ -267,15 +267,17 @@ test("row 1: refuses when no runtimes exist at all", () => {
   );
 });
 
-test("row 6: start forces fresh discovery instead of trusting stale cached negatives", async () => {
-  let refreshed = false;
+test("row 6: fetched query uses cached data without refetching", async () => {
+  let refetched = false;
   const runtimes = await availableRuntimesForStart({
-    forceRefresh: async () => {
-      refreshed = true;
-      return [gooseRuntime, { ...claudeRuntime, availability: "missing" }];
+    isFetched: true,
+    data: [gooseRuntime, { ...claudeRuntime, availability: "missing" }],
+    refetch: async () => {
+      refetched = true;
+      return { data: [] };
     },
   });
-  assert.equal(refreshed, true);
+  assert.equal(refetched, false);
   assert.deepEqual(
     runtimes.map((r) => r.id),
     ["goose"],
@@ -283,14 +285,16 @@ test("row 6: start forces fresh discovery instead of trusting stale cached negat
   );
 });
 
-test("row 6: fresh discovery result is used for start", async () => {
+test("row 6: unfetched query refetches instead of resolving empty", async () => {
   const runtimes = await availableRuntimesForStart({
-    forceRefresh: async () => [claudeRuntime],
+    isFetched: false,
+    data: undefined,
+    refetch: async () => ({ data: [claudeRuntime] }),
   });
   assert.deepEqual(
     runtimes.map((r) => r.id),
     ["claude"],
-    "start must use the freshly discovered runtime catalog",
+    "an unfetched query must fetch, not spuriously report no runtimes",
   );
 });
 

@@ -164,9 +164,6 @@ export function useManagedAgentActions() {
     try {
       const agent = managedAgents.find((c) => c.pubkey === pubkey);
       if (!agent) return;
-      if (agent.backend.type === "local") {
-        await availableRuntimesForStart(availableRuntimesQuery);
-      }
       await startManagedAgentWithRules({
         agent,
         startManagedAgent: startMutation.mutateAsync,

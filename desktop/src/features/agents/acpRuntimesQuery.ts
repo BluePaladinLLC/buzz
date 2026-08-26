@@ -48,11 +48,11 @@ export async function refreshAcpRuntimes(
       staleTime: 0,
       gcTime: 0,
     });
-    queryClient.setQueryData(acpRuntimesQueryKey, result);
-    // A hot-surface cheap fetch may already be in flight on the shared key; cancel
-    // it so its (older, cached) result cannot land after and clobber the fresh
-    // forced catalog we just wrote.
+    // A hot-surface cheap fetch may already be in flight on the shared key.
+    // Cancel it first: React Query cancellation can revert the query to its
+    // pre-fetch snapshot, which must not overwrite the fresh forced catalog.
     await queryClient.cancelQueries({ queryKey: acpRuntimesQueryKey });
+    queryClient.setQueryData(acpRuntimesQueryKey, result);
     return result;
   } catch {
     // The forced probe rejected. `fetchQuery` has already recorded the error in

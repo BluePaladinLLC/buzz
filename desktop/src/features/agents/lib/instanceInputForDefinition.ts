@@ -15,20 +15,22 @@ import {
 } from "../ui/managedAgentAvatar";
 
 type RuntimesQueryLike = {
-  forceRefresh: () => Promise<readonly AcpRuntimeCatalogEntry[] | undefined>;
+  isFetched: boolean;
+  data: readonly AcpRuntimeCatalogEntry[] | undefined;
+  refetch: () => Promise<{
+    data?: readonly AcpRuntimeCatalogEntry[] | undefined;
+  }>;
 };
 
 /**
  * Acquire the available-runtime list for a start action (Phase 1B.3.5
- * row 6). Starting is an acceptance boundary, so it always runs the forced
- * discovery path instead of trusting the cheap cache. The cheap path is
- * intentionally cache-only and can contain a negative result from before an
- * external CLI was installed or before the GUI process inherited its PATH.
+ * row 6). Refetch-aware: an unfetched query is fetched instead of being
+ * treated as an empty list (which would spuriously refuse every start).
  */
 export async function availableRuntimesForStart(
   query: RuntimesQueryLike,
 ): Promise<AcpRuntime[]> {
-  const entries = await query.forceRefresh();
+  const entries = query.isFetched ? query.data : (await query.refetch()).data;
   return (entries ?? []).filter(
     (runtime): runtime is AcpRuntime => runtime.availability === "available",
   );
