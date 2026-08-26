@@ -228,6 +228,11 @@ export function useAcpRuntimesQuery(options?: { enabled?: boolean }) {
 
 export function useAvailableAcpRuntimes(options?: { enabled?: boolean }) {
   const query = useAcpRuntimesQuery(options);
+  const queryClient = useQueryClient();
+  const forceRefresh = React.useCallback(
+    () => refreshAcpRuntimes(queryClient),
+    [queryClient],
+  );
   const available = React.useMemo(
     () =>
       (query.data ?? []).filter(
@@ -235,7 +240,7 @@ export function useAvailableAcpRuntimes(options?: { enabled?: boolean }) {
       ),
     [query.data],
   );
-  return { ...query, data: available };
+  return { ...query, data: available, forceRefresh };
 }
 
 export function useAcpAuthMethodsQuery(
