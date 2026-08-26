@@ -1,8 +1,8 @@
-name: Signed macOS Canary
+name: Backport macOS ARM64 Preview
 
-# Produces a signed and notarized Apple Silicon DMG from main without creating
-# a tag, GitHub Release, or auto-updater artifact. The DMG is available only as
-# a short-lived GitHub Actions artifact for explicit testing.
+# Produces one unsigned Apple Silicon DMG from this exact branch without
+# creating a tag, GitHub Release, or auto-updater artifact. The same immutable
+# build is used for the complete internal team acceptance pass.
 on:
   workflow_dispatch:
 
@@ -11,22 +11,17 @@ permissions:
 
 jobs:
   build:
-    name: Build signed macOS canary
-    if: github.repository == 'block/buzz'
+    name: Build team macOS ARM64 preview
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:
       contents: read
-      id-token: write # required by block/apple-codesign-action for OIDC
     steps:
-      - name: Require main
+      - name: Record preview source
         env:
           SOURCE_REF: ${{ github.ref }}
         run: |
-          if [[ "$SOURCE_REF" != "refs/heads/main" ]]; then
-            echo "::error::Signed canary builds must run from main; got $SOURCE_REF"
-            exit 1
-          fi
+          echo "Building backport preview from $SOURCE_REF"
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -48,7 +43,7 @@ jobs:
       - name: Install desktop dependencies
         run: just desktop-install-ci
 
-      - name: Derive canary version
+      - name: Derive preview version
         id: version
         run: |
           set -euo pipefail
@@ -59,9 +54,9 @@ jobs:
           fi
           VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))-test.${GITHUB_RUN_NUMBER}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building canary version $VERSION from $GITHUB_SHA"
+          echo "Building preview version $VERSION from $GITHUB_SHA"
 
-      - name: Patch canary version
+      - name: Patch preview version
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -100,7 +95,7 @@ jobs:
             !desktop/src-tauri/target/**/release/bundle
           key: ${{ steps.rust_cache_key.outputs.key }}
 
-      - name: Generate non-updating bundle config
+      - name: Generate non-updating preview config
         run: |
           cat > desktop/src-tauri/tauri.canary.conf.json <<'JSON'
           {
@@ -186,48 +181,23 @@ jobs:
           DMG_PATH: ${{ steps.unsigned.outputs.dmg }}
         run: desktop/scripts/set-dmg-finder-text-size.sh "$DMG_PATH" 14
 
-      # mdx-ios-codesign-helper discovers this file by its exact lowercase basename.
-      - name: Stage signing entitlements
-        run: cp desktop/src-tauri/Entitlements.plist "${RUNNER_TEMP}/entitlements.plist"
-
-      - name: Codesign and notarize
-        id: codesign
-        uses: block/apple-codesign-action@679535d1ab7c5a7c18e6f9afcba3464512cc3dde # v1.1.0
-        with:
-          osx-codesign-role: ${{ secrets.OSX_CODESIGN_ROLE }}
-          codesign-s3-bucket: ${{ secrets.CODESIGN_S3_BUCKET }}
-          unsigned-artifact-path: ${{ steps.unsigned.outputs.dmg }}
-          entitlements-plist-path: ${{ runner.temp }}/entitlements.plist
-          artifact-name: buzz-canary-${{ github.sha }}-${{ github.run_id }}-arm64
-
-      - name: Verify signed app
-        env:
-          SIGNED_APP_ZIP: ${{ steps.codesign.outputs.signed-artifact-path }}
-        run: |
-          set -euo pipefail
-          EXTRACT_DIR="${RUNNER_TEMP}/signed-app-extract"
-          rm -rf "$EXTRACT_DIR" && mkdir -p "$EXTRACT_DIR"
-          ditto -x -k "$SIGNED_APP_ZIP" "$EXTRACT_DIR"
-          codesign --verify --deep --strict --verbose=2 "$EXTRACT_DIR/Buzz.app"
-          spctl --assess --type execute --verbose=4 "$EXTRACT_DIR/Buzz.app"
-          desktop/scripts/verify-macos-entitlements.sh "$EXTRACT_DIR/Buzz.app"
-
-      - name: Stage signed DMG
+      - name: Verify and stage unsigned backport preview
         id: artifact
         env:
-          SIGNED_DMG: ${{ steps.codesign.outputs.signed-dmg-path }}
+          UNSIGNED_DMG: ${{ steps.unsigned.outputs.dmg }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          NAME="Buzz_${VERSION}_aarch64-signed.dmg"
-          cp "$SIGNED_DMG" "$RUNNER_TEMP/$NAME"
+          NAME="Buzz_${VERSION}_aarch64-backport-preview.dmg"
+          cp "$UNSIGNED_DMG" "$RUNNER_TEMP/$NAME"
+          shasum -a 256 "$RUNNER_TEMP/$NAME"
           echo "path=$RUNNER_TEMP/$NAME" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Upload signed canary
+      - name: Upload unsigned backport preview
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: buzz-macos-canary-${{ github.sha }}
+          name: buzz-macos-arm64-backport-preview-${{ github.sha }}
           path: ${{ steps.artifact.outputs.path }}
           if-no-files-found: error
           retention-days: 7
@@ -236,8 +206,8 @@ jobs:
         if: always()
         run: du -sh ~/.cargo/registry ~/.cargo/git target desktop/src-tauri/target 2>/dev/null || true
 
-      # Only this trusted, main-bound canary writes the cache. Excluding bundle
-      # output prevents installers or signed artifacts from entering it.
+      # Excluding bundle output prevents preview installers from entering the
+      # source build cache.
       - name: Save exact release Cargo cache
         if: steps.rust_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
