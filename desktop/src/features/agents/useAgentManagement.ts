@@ -10,7 +10,7 @@ import { subscribeAgentManagementRequests } from "./observerRelayStore";
 import {
   managedAgentsQueryKey,
   personasQueryKey,
-  useAcpRuntimesQuery,
+  useAvailableAcpRuntimes,
   useCreateManagedAgentMutation,
   useCreatePersonaMutation,
   useManagedAgentsQuery,
@@ -62,7 +62,7 @@ export function useAgentManagement() {
   const personasQuery = usePersonasQuery();
   const managedAgentsQuery = useManagedAgentsQuery();
   const channelsQuery = useChannelsQuery();
-  const runtimesQuery = useAcpRuntimesQuery({ enabled: true });
+  const runtimesQuery = useAvailableAcpRuntimes({ enabled: true });
   const createPersonaMutation = useCreatePersonaMutation();
   const updatePersonaMutation = useUpdatePersonaMutation();
   const createAgentMutation = useCreateManagedAgentMutation();
