@@ -16,7 +16,10 @@ import { getUsableTeams } from "@/features/agents/lib/teamPersonas";
 import { AddChannelBotPersonasSection } from "@/features/channels/ui/AddChannelBotPersonasSection";
 import { AddChannelBotRelayAgentsSection } from "@/features/channels/ui/AddChannelBotRelayAgentsSection";
 import { AddChannelBotTeamsSection } from "@/features/channels/ui/AddChannelBotTeamsSection";
-import { useAddChannelMembersMutation, useChannelMembersQuery } from "@/features/channels/hooks";
+import {
+  useAddChannelMembersMutation,
+  useChannelMembersQuery,
+} from "@/features/channels/hooks";
 import { useInChannelPersonaIds } from "@/features/channels/ui/useInChannelPersonaIds";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
@@ -169,7 +172,8 @@ export function AddChannelBotDialog({
     );
     setSelectedRelayAgentPubkeys((current) =>
       current.filter(
-        (pubkey) => eligiblePubkeys.has(pubkey) && !inChannelPubkeys.has(pubkey),
+        (pubkey) =>
+          eligiblePubkeys.has(pubkey) && !inChannelPubkeys.has(pubkey),
       ),
     );
   }, [inChannelPubkeys, relayAgents]);
@@ -209,7 +213,8 @@ export function AddChannelBotDialog({
   }
 
   async function handleSubmit() {
-    if (selectedPersonas.length === 0 && selectedRelayAgents.length === 0) return;
+    if (selectedPersonas.length === 0 && selectedRelayAgents.length === 0)
+      return;
     if (selectedPersonas.length > 0 && providers.length === 0) return;
 
     const inputs = selectedPersonas.map((persona) => {
@@ -248,7 +253,10 @@ export function AddChannelBotDialog({
           ? await createBotsMutation.mutateAsync(inputs)
           : { successes: [], failures: [] };
       const relayAgentsByPubkey = new Map<string, RelayAgent>(
-        selectedRelayAgents.map((agent) => [normalizePubkey(agent.pubkey), agent]),
+        selectedRelayAgents.map((agent) => [
+          normalizePubkey(agent.pubkey),
+          agent,
+        ]),
       );
       const relayFailures = relayResult.errors.map(({ pubkey, error }) => ({
         name: relayAgentsByPubkey.get(normalizePubkey(pubkey))?.name ?? pubkey,
@@ -294,7 +302,8 @@ export function AddChannelBotDialog({
     !createBotsMutation.isPending &&
     !addMembersMutation.isPending;
   const selectionCount = selectedPersonas.length + selectedRelayAgents.length;
-  const isSubmitting = createBotsMutation.isPending || addMembersMutation.isPending;
+  const isSubmitting =
+    createBotsMutation.isPending || addMembersMutation.isPending;
   const addButtonLabel = isSubmitting
     ? selectionCount > 1
       ? `Adding ${selectionCount}…`
@@ -359,7 +368,9 @@ export function AddChannelBotDialog({
             channelMembersQuery.isLoading
           }
           onToggleAgent={(pubkey) => {
-            setSelectedRelayAgentPubkeys((current) => toggleValue(current, pubkey));
+            setSelectedRelayAgentPubkeys((current) =>
+              toggleValue(current, pubkey),
+            );
             setSubmissionNotice(null);
             setSubmissionError(null);
           }}
@@ -380,7 +391,9 @@ export function AddChannelBotDialog({
           />
         ) : null}
 
-        {providers.length === 0 && selectedPersonas.length > 0 && !providersLoading ? (
+        {providers.length === 0 &&
+        selectedPersonas.length > 0 &&
+        !providersLoading ? (
           <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <p className="text-sm text-warning">
