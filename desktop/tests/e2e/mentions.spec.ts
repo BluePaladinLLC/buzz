@@ -209,7 +209,6 @@ test("@ trigger prioritizes channel members before runnable personas and other m
 
   const dropdown = autocomplete(page);
   await expect(dropdown).toBeVisible();
-  await expect(dropdown.getByText("alice")).toHaveCount(0);
   await expect(dropdown.getByText("bob")).toBeVisible();
   await expect(dropdown.getByText("Fizz")).toBeVisible();
   await expect(dropdown.getByText("charlie")).toBeVisible();
@@ -217,15 +216,18 @@ test("@ trigger prioritizes channel members before runnable personas and other m
   const charlieRow = dropdown.locator("button", { hasText: "charlie" });
   await expect(charlieRow.getByTestId("mention-agent-icon")).toBeVisible();
   await expect(charlieRow.getByText("not in channel")).toBeVisible();
-  await expect(
-    dropdown
-      .locator("button", { hasText: "alice" })
-      .getByText("not in channel"),
-  ).not.toBeVisible();
+  // alice is a relay-hosted agent (respond_to: anyone) that IS a member of
+  // general — reachable remote agents surface in the picker, and members
+  // carry no "not in channel" badge.
+  const aliceRow = dropdown.locator("button", { hasText: "alice" });
+  await expect(aliceRow).toBeVisible();
+  await expect(aliceRow.getByTestId("mention-agent-icon")).toBeVisible();
+  await expect(aliceRow.getByText("not in channel")).not.toBeVisible();
 
   const suggestions = dropdown.locator("button");
   const suggestionText = await suggestions.allInnerTexts();
   const fizzIndex = suggestionText.findIndex((text) => text.includes("Fizz"));
+  const aliceIndex = suggestionText.findIndex((text) => text.includes("alice"));
   const bobIndex = suggestionText.findIndex((text) => text.includes("bob"));
   const charlieIndex = suggestionText.findIndex((text) =>
     text.includes("charlie"),
@@ -234,10 +236,12 @@ test("@ trigger prioritizes channel members before runnable personas and other m
     text.includes("outsider"),
   );
   expect(fizzIndex).toBeGreaterThanOrEqual(0);
+  expect(aliceIndex).toBeGreaterThanOrEqual(0);
   expect(bobIndex).toBeGreaterThanOrEqual(0);
   expect(charlieIndex).toBeGreaterThanOrEqual(0);
   expect(outsiderIndex).toEqual(-1);
   expect(bobIndex).toBeLessThan(fizzIndex);
+  expect(aliceIndex).toBeLessThan(fizzIndex);
   expect(fizzIndex).toBeLessThan(charlieIndex);
 });
 
