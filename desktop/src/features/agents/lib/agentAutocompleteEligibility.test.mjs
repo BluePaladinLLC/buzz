@@ -6,6 +6,7 @@ import {
   getMentionableAgentPubkeys,
   getSharedChannelIds,
   isAgentIdentityInManagedList,
+  isAgentIdentityReachable,
   relayAgentIsSharedWithUser,
   shouldHideAgentFromMentions,
 } from "./agentAutocompleteEligibility.ts";
@@ -157,6 +158,41 @@ test("isAgentIdentityInManagedList: keeps people and only current managed agent 
     isAgentIdentityInManagedList(
       { isAgent: true, pubkey: PUB_B },
       managedAgentPubkeys,
+    ),
+    false,
+  );
+});
+
+test("isAgentIdentityReachable: keeps people, managed agents, and mentionable relay agents", () => {
+  // Managed agents are always part of the mentionable set — see
+  // getMentionableAgentPubkeys, which seeds from managedAgentPubkeys.
+  const mentionableAgentPubkeys = new Set([PUB_A, PUB_B]);
+
+  assert.equal(
+    isAgentIdentityReachable(
+      { isAgent: false, pubkey: PUB_C },
+      mentionableAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityReachable(
+      { isAgent: true, pubkey: PUB_A },
+      mentionableAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityReachable(
+      { isAgent: true, pubkey: PUB_B.toUpperCase() },
+      mentionableAgentPubkeys,
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentIdentityReachable(
+      { isAgent: true, pubkey: PUB_C },
+      mentionableAgentPubkeys,
     ),
     false,
   );

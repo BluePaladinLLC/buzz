@@ -5,11 +5,14 @@ import {
   invalidateChannelState,
   useAddChannelMembersMutation,
   useChannelMembersQuery,
+  useChannelsQuery,
 } from "@/features/channels/hooks";
 import { attachManagedAgentToChannel } from "@/features/agents/channelAgents";
 import {
   coalesceAgentAutocompleteCandidates,
-  isAgentIdentityInManagedList,
+  getMentionableAgentPubkeys,
+  getSharedChannelIds,
+  isAgentIdentityReachable,
 } from "@/features/agents/lib/agentAutocompleteEligibility";
 import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import { useClassifiedMembers } from "@/features/channels/lib/useClassifiedMembers";
@@ -184,6 +187,11 @@ export function MembersSidebar({
     managedAgentsQuery,
     relayAgentsQuery,
   } = useClassifiedMembers(rawMembers, currentPubkey);
+  const channelsQuery = useChannelsQuery();
+  const sharedChannelIds = React.useMemo(
+    () => getSharedChannelIds(channelsQuery.data),
+    [channelsQuery.data],
+  );
   const activeMembers = React.useMemo(
     () =>
       [...people, ...bots].sort((left, right) =>
@@ -272,6 +280,12 @@ export function MembersSidebar({
         .filter((label): label is string => Boolean(label)),
     );
     const managedAgentPubkeys = new Set(managedAgentsByPubkey.keys());
+    const mentionableAgentPubkeys = getMentionableAgentPubkeys({
+      currentPubkey,
+      managedAgentPubkeys,
+      relayAgents: relayAgentsQuery.data,
+      sharedChannelIds,
+    });
 
     const addCandidate = (candidate: AddMemberSearchCandidate) => {
       const pubkey = normalizePubkey(candidate.pubkey);
@@ -282,7 +296,7 @@ export function MembersSidebar({
           )) ||
         memberPubkeys.has(pubkey) ||
         isArchivedDiscovery(pubkey) ||
-        !isAgentIdentityInManagedList(candidate, managedAgentPubkeys)
+        !isAgentIdentityReachable(candidate, mentionableAgentPubkeys)
       ) {
         return;
       }
@@ -367,6 +381,7 @@ export function MembersSidebar({
     memberPubkeys,
     normalizedDeferredSearchQuery,
     relayAgentsQuery.data,
+    sharedChannelIds,
     userSearchResults,
     rawMembers,
   ]);

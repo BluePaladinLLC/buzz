@@ -64,6 +64,22 @@ export function isAgentIdentityInManagedList(
   );
 }
 
+// Reachability gate for the @-mention and add-people pickers. Agents pass
+// when in the mentionable set (see `getMentionableAgentPubkeys`: locally
+// managed, or granted access via respond_to=anyone with a shared channel
+// or an allowlist naming the viewer). Managed-only filtering hid reachable
+// community agents that run on other hosts; unreachable/ghost agent
+// identities are outside the set and stay hidden.
+export function isAgentIdentityReachable(
+  candidate: { isAgent?: boolean; pubkey: string },
+  mentionableAgentPubkeys: ReadonlySet<string>,
+) {
+  return (
+    candidate.isAgent !== true ||
+    mentionableAgentPubkeys.has(normalizePubkey(candidate.pubkey))
+  );
+}
+
 export function shouldHideAgentFromMentions({
   isAgent,
   isMember,
