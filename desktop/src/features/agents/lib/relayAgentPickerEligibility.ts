@@ -1,7 +1,4 @@
-import type {
-  RelayAgent,
-  UserProfileSummary,
-} from "@/shared/api/types";
+import type { RelayAgent, UserProfileSummary } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 
 export type RelayAgentPickerCandidate = {

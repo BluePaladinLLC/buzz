@@ -1,9 +1,6 @@
 import { Check } from "lucide-react";
 
-import type {
-  RelayAgent,
-  UserProfileSummary,
-} from "@/shared/api/types";
+import type { RelayAgent, UserProfileSummary } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { ProfileAvatar } from "@/features/profile/ui/ProfileAvatar";
